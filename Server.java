@@ -1,171 +1,189 @@
-import java.net.*;
-import java.util.*;
-import java.util.HashMap;
-import java.util.Map;
-import java.io.IOException;
+import java.net.*; 
+import java.io.*;
+import java.util.Scanner;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.TimeZone;
+import java.util.Arrays;
 
-public class Server{
-  private static HashMap<String, String> names = new HashMap<String, String>();
-  private static HashMap<String, String[]> neighbors = new HashMap<String, String[]>();
-  private static HashMap<String, Boolean> refreshed = new HashMap<String, Boolean>();
-  private static HashMap<String, Boolean> deactive = new HashMap<String, Boolean>();
-
-  public static void main( String args[]) throws Exception {
-  }
-  public static void start(int port) throws Exception{
-    DatagramSocket dsock;
-    try{
-      dsock = new DatagramSocket(port);
+public class Server implements Runnable{ 
+    private static String page404 = "<html>\nNot Found\n</html>";
+    private Socket clientSocket;
+    public Server(Socket s){
+        clientSocket = s;
     }
-    catch(SocketException e){
-      return;
-    }
-    byte arr1[] = new byte[250];                                
-    DatagramPacket dpack = new DatagramPacket(arr1, arr1.length );
-
-    Timer t = new Timer();
-    TimerTask tt = new TimerTask(){
-      @Override
-      public void run(){
-        for(String key : refreshed.keySet()){
-          Boolean value = refreshed.get(key);
-          if(value == false){
-            if(!deactive.containsKey(key)){
-              deactive.put(key, true);
-            }
-          }
-          else{
-            if(deactive.containsKey(key)){
-              deactive.remove(key);
-            }
-            refreshed.replace(key, false);
-          }
-        }
-      };
-    };
-    t.scheduleAtFixedRate(tt,30000,30000);
-
-    while(true){
-      arr1 = new byte[250];
-      dpack = new DatagramPacket(arr1, arr1.length ); 
-      dsock.receive(dpack);
-      byte arr2[] = dpack.getData();
-      String temp_msg = new String(arr2);
-      int packSize = dpack.getLength();
-      String s2 = new String(arr2, 0, packSize);
-      String[] params = s2.split(":");
-      String command = params[0];
-      if(command.equals("new")){
-        String name = params[1];
-        String uuid = params[2];
-        int peer_count = Integer.parseInt(params[3]);
-        String[] peers = new String[peer_count];
-        for(int i = 0;i < peer_count; i++){
-          String[] parts = params[i + 4].split(",");
-          if(!refreshed.containsKey(parts[0])){
-            refreshed.put(parts[0], false);
-          }
-          if(!deactive.containsKey(parts[0])){
-            deactive.put(parts[0], true);
-          }
-          String part = parts[0] + ":" + parts[3];
-          peers[i] = part;
-        }
-        names.put(uuid, name);
-        neighbors.put(uuid, peers);
-        refreshed.put(uuid,false);
-        dsock.send(dpack);
-      }
-      else if(command.equals("add")){
-        if(neighbors.containsKey(params[1])){
-          String[] temp = neighbors.get(params[1]);
-          String[] new_temp = new String[temp.length+1];
-          for(int i = 0; i < temp.length; i++){
-            new_temp[i] = temp[i];
-          }
-          new_temp[temp.length] = params[2] + ":" + params[3];
-          neighbors.replace(params[1], new_temp);
-          if(!refreshed.containsKey(params[2])){
-            refreshed.put(params[2], false);
-          }
-          if(!deactive.containsKey(params[2])){
-            deactive.put(params[2], true);
-          }
-        }
-        dsock.send(dpack);
-      }
-      else if(command.equals("neighbors")){
-        if(neighbors.containsKey(params[1])){
-          String[] temp = neighbors.get(params[1]);
-          String new_temp = "";
-          for(int i = 0; i < temp.length; i++){
-            String[] temp_params = temp[i].split(":");
-            if(deactive.containsKey(temp_params[0])){
-              continue;
-            }
-            if(names.containsKey(temp_params[0])){
-              temp[i] = names.get(temp_params[0]) + ":" + temp_params[1];
-            }
-            new_temp += temp[i] + ",";
-          }
-          new_temp = new_temp.substring(0,new_temp.length()-1);
-          byte[] arr = new_temp.getBytes();
-          dpack.setData(arr);
-          dsock.send(dpack);
-        }
-      }
-      else if(command.equals("active")){
-        if(refreshed.containsKey(params[1])){
-          refreshed.replace(params[1], true);
+    public static void main(String[] args) throws IOException {
+        int port;
+        if(args.length >= 1){
+            port = Integer.parseInt(args[0]);
         }
         else{
-          refreshed.put(params[1], true);
+            port = 10007;
         }
-        if(deactive.containsKey(params[1])){
-          deactive.remove(params[1]);
+        System.out.println(port);
+        ServerSocket serverSocket = new ServerSocket(10007);
+        while(true){
+            //Code for spawning new threads to deal with concurrent clients
+            Server server = new Server(serverSocket.accept());
+            Thread t = new Thread(server);
+            t.start();
+            
         }
-        dsock.send(dpack);
-      }
-      else if(command.equals("map")){
-        String add = "";
-        for(String key : neighbors.keySet()){
-          if(!deactive.containsKey(key)){
-            String name = key;
-            if(names.containsKey(key)){
-              name = names.get(key);
-            }
-            add += name + ":{";
-            String[] neighbor = neighbors.get(key);
-            String ret = "";
-            for(int i = 0; i < neighbor.length; i++){
-              String[] temp_params = neighbor[i].split(":");
-              //String[] parts = temp_params.split(":");
-              String temp_name = temp_params[0];
-              if(deactive.containsKey(temp_name)){
-                continue;
-              }
-              if(names.containsKey(temp_params[0])){
-                temp_name = names.get(temp_params[0]);
-              }
-              ret = temp_name + ":" + temp_params[1] + ",";
-              add += ret;
-            }
-            if(add.charAt(add.length() - 1) == ','){
-              add = add.substring(0,add.length()-1);
-            }
-            add += "},\n";
-          }
-        }
-        if(add.charAt(add.length() - 1) == ','){
-          add = add.substring(0,add.length()-1);
-        }
-        byte[] arr = add.getBytes();
-        dpack.setData(arr);
-        dsock.send(dpack);
-      }
-      else if(command.equals("kill")){
-        System.exit(-1);
-      }
     }
-  }
-}
+    @Override //Code that the threads run
+    public void run(){
+        try{
+            BufferedReader in = new BufferedReader(new 
+                InputStreamReader( clientSocket.getInputStream()));
+            PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true); 
+            BufferedOutputStream dOut = new BufferedOutputStream(clientSocket.getOutputStream());
+            String inputLine = in.readLine();
+            String inputLine2 = "test";
+            String range = "";
+            int i = 0;
+            //Used to find the range line
+            while(inputLine2 != null && inputLine2 != "" && i < 8){
+                i++;
+                if(inputLine2.contains("Range")){
+                    range = inputLine2;
+                    break;
+                }
+                else if(inputLine2.contains("Cache-Control")){
+                    break;
+                }
+                inputLine2 = in.readLine();
+            }
+            
+            System.out.println(inputLine);
+            String[] words = inputLine.split(" ");
+            String type = words[0];
+            String fName = words[1].substring(1,words[1].length());
+            SimpleDateFormat sdf = new SimpleDateFormat("EEEEE, dd MMM yyyy HH:mm:ss z");
+            sdf.setTimeZone(TimeZone.getTimeZone("GMT"));
+            if(!type.equals("GET")){ //If not a get request
+                System.out.println("Not implemented");
+                print(page404.length(), "text/html", 
+                    page404.getBytes(), "HTTP/1.1 404 Not Found",
+                    in, out, dOut, sdf.format(new Date()));
+            }
+            else if(fName.contains("favicon")){
+
+            }
+            else if(range.contains("Range")){ //Used if range is implemented
+                File f = new File(fName);
+                String[] bounds = range.split("=")[1].split("-");
+                int start = Integer.parseInt(bounds[0]);
+                String content = content(fName);
+                int end;
+                if(bounds.length > 1){
+                    end = Integer.parseInt(bounds[1]);
+                }
+                else{
+                    end = (int)f.length();
+                }
+                int length = end - start;
+                FileInputStream fIS = new FileInputStream(f);
+                byte[] data = new byte[fIS.available()];
+                fIS.read(data);
+                if(fIS != null){
+                    fIS.close();
+                }
+                data = Arrays.copyOfRange(data, start, end);
+                print(length, content, data, "HTTP/1.1 206 Partial Content", 
+                    in, out, dOut, sdf.format(f.lastModified()));
+            }
+            else{
+                try{//Used if file exists and no range
+                    File f = new File(fName);
+                    System.out.println("file found!");
+                    int length = (int)f.length();
+                    String content = content(fName);
+                    byte[] data = null;
+                    data = read(f, length);
+                    print(length, content, data, "HTTP/1.1 200 OK", 
+                        in, out, dOut, sdf.format(f.lastModified()));
+                    in.close();
+                    out.close();
+                    dOut.close();
+                    clientSocket.close();
+                }
+                catch(FileNotFoundException e){ //if file does not exist
+                    System.out.println("File not found");
+                    print(page404.length(), "text/html", 
+                        page404.getBytes(), "HTTP/1.1 404 Not Found",
+                        in, out, dOut, sdf.format(new Date()));
+                    in.close();
+                    out.close();
+                    dOut.close();
+                    clientSocket.close();
+                }
+            }
+        }
+        catch(IOException e){
+            e.printStackTrace();
+        }
+        catch(NullPointerException e){
+            e.printStackTrace();
+        }
+    }
+    private static void print(int length, String content, byte[] data, String status, 
+        BufferedReader in, PrintWriter out, BufferedOutputStream dOut, 
+        String date) throws IOException{ //Function used to send correct information
+        SimpleDateFormat sdf = new SimpleDateFormat("EEEEE, dd MMM yyyy HH:mm:ss z");
+        sdf.setTimeZone(TimeZone.getTimeZone("GMT"));
+        out.println(status);
+        out.println("Connection: Keep-Alive");
+        out.println("Date: " + sdf.format(new Date()));
+        out.println("Content-Length: " + length);
+        out.println("Content-Type: " + content);
+        out.println("Accept-Ranges: bytes");
+        out.println("Last-Modified" +  date);//sdf.format(f.lastModified()));
+        out.println();
+        out.flush();
+        dOut.write(data, 0, length);
+        dOut.flush();
+    }
+
+    private static String content(String name){ //Returns correct content type
+        if(name.endsWith(".txt")){
+            return "text/plain";
+        }
+        else if(name.endsWith(".css")){
+            return "text/css";
+        }
+        else if(name.endsWith(".html") || name.endsWith(".htm")){
+            return "text/html";
+        }
+        else if(name.endsWith(".gif")){
+            return "image/gif";
+        }
+        else if(name.endsWith("jpg") || name.endsWith("jpeg")){
+            return "image/jpeg";
+        }
+        else if(name.endsWith(".png")){
+            return "image/png";
+        }
+        else if(name.endsWith(".js")){
+            return "application/javascript";
+        }
+        else if(name.endsWith(".mp4")){
+            return "video/mp4";
+        }
+        else if(name.endsWith(".webm") || name.endsWith(".ogg")){
+            return "video/webm";
+        }
+        else{
+            return "application/octet-stream";
+        }
+    }
+
+    private static byte[] read(File f, int length) throws IOException{ //Used to read file data
+        FileInputStream fIS = new FileInputStream(f);
+        byte[] data = new byte[length];
+        fIS.read(data);
+        if(fIS != null){
+            fIS.close();
+        }
+        return data;
+    }
+} 
